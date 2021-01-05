@@ -1,0 +1,576 @@
+﻿This is a detailed procedure of how to set up Fully Distribute Hadoop
+on an Amazon EC2 cluster. 
+
+In order to replicate this you will need at least 30 minutes, AWS account,
+an ssh client which comes standard on Mac and Linux platforms,
+and can be installed on windows OS by following:
+
+	https://docs.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse 
+
+**Note: This procedure does NOT utilize Putty or Filezilla, 
+	make sure you have SSH and SCP capabilities.**
+
+here we go! 
+___________________________________________________________________________________
+
+-Create 3 Amazon EC2 Ubuntu 18.04 instances with open all TCP, SSH, and all UDP communications
+	I strongly recommend setting shutdown behavior to terminate instead of stop.
+
+-Write down all public DNS addresses, and on the AWS console change instance names as one Namenode an
+and datanode01 and datanode02 (for reference)
+
+-ssh into your Namenode instance from the terminal by:
+
+	ssh -i path/pem_key_filename ubuntu@namenode_public-DNS
+
+_________________________________Check Point________________________________________
+
+
+
+###############################################################################
+#################### Setting up Passphrashe-less SSH ##########################
+
+From the Namenode terminal you SSH into previously, type the follwoing command:
+
+	$ sudo vim ~/.ssh/config
+
+it will open a the file where you will then paste/type the contents below: 
+
+	(hit 'i' key to access editing mode)
+
+Host namenode
+  HostName namenode_public_dns   
+  User ubuntu
+  IdentityFile ~/.ssh/pem_key_filename
+Host datanode01
+  HostName datanode01_public_dns  
+  User ubuntu
+  IdentityFile ~/.ssh/pem_key_filename
+Host datanode02
+  HostName datanode02_public_dns
+  User ubuntu
+  IdentityFile ~/.ssh/pem_key_filename
+
+Repeat for all datanodes
+
+then, hit 'esc' key to leave editing mode, type :wq to write and quit the file.
+at this point you should be back to the ubuntu terminal.
+
+	$ exit (to return to your local OS terminal)
+
+from your local terminal copy your private key to your namenode instance with the code:
+
+	>scp -i path/pem_key_filename path/pem_key_filename ubuntu@Namenode_public_DNS:~/.ssh
+
+Now, ssh back into Namenode instance and make sure key.pem was copied:
+
+	>ssh -i path/pem_key_filename ubuntu@namenode_public-DNS
+	$cd ~/.ssh 
+	$ls 
+
+At this point pem_key_filename should be listed in that directory.
+
+	$chmod 400 pem_key_filename #ensure permissions are private
+
+______________________________Checkpoint____________________________________
+
+Now, we will create an additional key for instances to communicate with eachother.
+
+On Namenode Terminal, execute the following:
+
+   $ssh-keygen -f ~/.ssh/id_rsa -t rsa -P ""
+   $cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+   $cat ~/.ssh/id_rsa.pub | ssh datanode01 'cat >> ~/.ssh/authorized_keys'
+   $cat ~/.ssh/id_rsa.pub | ssh datanode02 'cat >> ~/.ssh/authorized_keys'   
+   $...	
+   $...
+   $cat ~/.ssh/id_rsa.pub | ssh datanodeN 'cat >> ~/.ssh/authorized_keys'
+
+
+	#last three commands copy the contents of the generated key into namdenode,
+	and all datanodes respectively.
+
+   Try passphraseless ssh into datanodes by:
+   
+	$ssh datanode01
+	$exit
+	#ssh datanode02
+	$exit
+	$ssh datanodeN
+	$exit
+
+At this point you should be back to Namemode Terminal
+
+_____________________________Checkpoint________________________________________
+###############################################################################
+###################### End Setting up Passphraseless ##########################
+/
+/
+/	
+/
+###############################################################################
+######################## Install Java and Hadoop ##############################
+
+From your Namenode terminal execute:
+
+	$cd ~
+	$sudo apt-get update
+	$sudo apt-get install openjdk-8-jdk
+	$wget https://archive.apache.org/dist/hadoop/common/hadoop-2.6.0/hadoop-2.6.0.tar.gz -P ~
+	$sudo tar zxvf ~/hadoop-2.6.0.tar.gz -C /usr/local
+	$sudo mv /usr/local.hadoop-2.6.0 /usr/local/hadoop
+
+
+Then setup the Environment Variables: [You will come back here later]
+
+	$sudo vim ~/.profile
+
+		hit 'i' on keyboard to enter editing mode and paste/type the following 
+		contents into that file:
+
+	export JAVA_HOME=/usr
+	export PATH=$PATH:$JAVA_HOME/bin
+   	export HADOOP_HOME=/usr/local/hadoop
+   	export PATH=$PATH:$HADOOP_HOME/bin
+   	export HADOOP_CONF_DIR=/usr/local/hadoop/etc/hadoop
+
+hit 'esc' and type :wq and 'enter' key to write and quit file
+
+From your NameNode terminal execute:
+
+	$cd ~
+	$source ~/.profile
+	$$HADOOP_HOME
+
+		last command should have output /usr/local/hadoop if it doesn't
+		something is wrong.
+
+
+[End of 'you will come back here' section]
+
+At this point, the environment variables are set in the Nanenode only,
+The same procdure needs to be repeated for EVERY instance in the cluster.
+From your Namemode cluster eecute:
+
+	$ssh datanode01
+	$sudo apt-get update
+	$sudo apt-get install openjdk-8-jdk
+	
+		then repeat the section marked as [You will come bach here later]
+	
+	$exit
+	$ssh datanode02
+	$sudo apt-get update
+	$sudo apt-get install openjdk-8-jdk
+
+		then repeat the section marked as [you will come back here later]
+
+	$exit
+
+Repeat this for ALL datanodes on your cluster.
+
+If everything has been done correctly, you should be back at your Namenode terminal home/dir
+Up to this point, Java has been installed on Namenode and all Datanodes. 
+However, Hadoop has been installed ONLY on Namenode. The reason for this is that setting up
+Hadoop involves a lot of work, instead of repeating all the tedious work on every instance,
+We will set it up on the namenode, tarball the configured version, copy the tarball
+into the other instances and unpack the configured distribution, this way, we will only
+go through the configuration steps once.
+
+______________________________Checkpoint________________________________________
+################################################################################
+################## End of Install Java and Hadoop ##############################
+/
+/
+/
+/
+################################################################################
+############################ Preparing Hadoop ##################################
+
+From your Namenode Terminal execute:
+
+	$cd ~
+	$sudo vim $HADOOP_CONF_DIR/hadoop-env.sh
+
+	i
+	   	# The java implementation to use.
+   		export JAVA_HOME=/usr
+	 
+	esc
+		:wq
+	enter
+	
+	$sudo vim $HADOOP_CONF_DIR/core-site.xml
+
+	i
+		   
+		<configuration>
+   		<property>
+     		<name>fs.defaultFS</name>
+     		<value>hdfs://namenode_public_dns:9000</value>
+   		</property>
+   		</configuration>
+
+	esc
+		:wq
+	enter
+
+	$sudo vim $HADOOP_CONF_DIR/yarn-site.xml
+
+	i
+	    <configuration>
+    		<! — Site specific YARN configuration properties →
+    		<property>
+      			<name>yarn.nodemanager.aux-services</name>
+      			<value>mapreduce_shuffle</value>
+    		</property> 
+    		<property>
+      			<name>yarn.nodemanager.aux-services.mapreduce.shuffle.class</name>
+      			<value>org.apache.hadoop.mapred.ShuffleHandler</value>
+    		</property>
+    		<property>
+      			<name>yarn.resourcemanager.hostname</name>
+      			<value>namenode_public_dns</value>
+    		</property>
+    		</configuration>
+	esc
+		:wq
+	enter
+
+	$sudo vim $HADOOP_CONF_DIR/mapred-site.xml
+
+	i
+	   <configuration>
+   		<property>
+   			<name>mapreduce.jobtracker.address</name>
+     			<value>namenode_public_dns:54311</value>
+   		</property>
+   		<property>
+     			<name>mapreduce.framework.name</name>
+     			<value>yarn</value>
+   		</property>
+   		</configuration>
+	esc
+		:wq
+	enter
+
+
+
+NameNode Specific Configurations
+
+	$sudo vim /etc/hosts
+
+	i
+   		127.0.0.1 localhost
+   		namenode_public_dns namenode_hostname
+   		datanode01_public_dns datanode01_hostname
+	esc
+		:wq
+	enter
+
+	$sudo vim $HADOOP_CONF_DIR/hdfs-site.xml
+
+	i
+  		<configuration>
+  		<property>
+    			<name>dfs.replication</name>
+    			<value>2</value>
+  		</property>
+  		<property>
+    			<name>dfs.namenode.name.dir</name>
+    			<value>file:///usr/local/hadoop/hadoop_data/hdfs/namenode</value>
+  		</property>
+  		<property>
+    			<name>dfs.datanode.data.dir</name>
+    			<value>file:///usr/local/hadoop/hadoop_data/hdfs/datanode</value>
+  		</property>
+  		</configuration>
+	esc
+		:wq
+	enter
+
+	$sudo vim $HADOOP_CONF_DIR/masters
+
+	i
+	       namenode_hostname
+	esc
+		:wq
+	enter
+	
+	$sudo vim $HADOOP_CONF_DIR/slaves
+
+	i
+       		namenode_hostname
+       		datanode_hostname
+ 	esc
+		:wq
+	enter
+
+ 	$sudo mkdir -p $HADOOP_HOME/hadoop_data/hdfs/namenode
+        $sudo mkdir -p $HADOOP_HOME/hadoop_data/hdfs/datanode
+        $sudo chown -R ubuntu $HADOOP_HOME
+
+_______________________________________________________Datanode Specific Configurations
+
+	$sudo vim $HADOOP_CONF_DIR/hdfs-site.xml
+
+	i
+  		<configuration>
+  		<property>
+    			<name>dfs.replication</name>
+    			<value>2</value>
+  		</property>
+  		<property>
+    			<name>dfs.namenode.name.dir</name>
+    			<value>file:///usr/local/hadoop/hadoop_data/hdfs/namenode</value>
+  		</property>
+  		<property>
+    			<name>dfs.datanode.data.dir</name>
+    			<value>file:///usr/local/hadoop/hadoop_data/hdfs/datanode</value>
+  		</property>
+  		</configuration>
+ 	esc
+		:wq
+	enter
+
+Create datanode directory on each datanode  
+From your Namenode Terminal execute:
+
+	$ssh datanode01	
+        $sudo mkdir -p $HADOOP_HOME/hadoop_data/hdfs/datanode
+        $sudo chown -R ubuntu $HADOOP_HOME
+	$exit
+	$ssh datanode02
+	$sudo mkdir -p $HADOOP_HOME/hadoop_data/hdfs/datanode
+        $sudo chown -R ubuntu $HADOOP_HOME
+	$exit
+	
+Prepare an already configured version of Hadoop as a tarball,
+From your NameNode Terminal execute:
+
+	$cd /usr/local/
+	$sudo tar czf myarchive.tar.gz hadoop
+	$scp myarchive.tar.gz datanode01:~
+	$ssh datanode01
+	$sudo mv myarchive.tar.gz /usr/local
+	$cd /usr/local
+	$sudo tar xzf myarchive.tar.gz
+	$exit
+
+	$scp myarchive.tar.gz datanode02:~
+	$ssh datanode02
+	$sudo mv myarchive.tar.gz /usr/local
+	$cd /usr/local
+	$sudo tar xzf myarchive.tar.gz
+	$exit
+	
+if you check the contents of /usr/local/hadoop/etc/hadoop you will see the files as configured
+previously on Namenode
+ 
+
+Start Hadoop Cluster
+
+   $ hdfs namenode -format
+   $ $HADOOP_HOME/sbin/start-dfs.sh
+   $ $HADOOP_HOME/sbin/start-yarn.sh
+   $ $HADOOP_HOME/sbin/mr-jobhistory-daemon.sh start historyserver
+
+
+#################################################################################
+######################## Oozie Installation/Build ###############################
+
+
+Install Maven:
+
+	$sudo apt-get install maven
+
+Download Oozie-4.1.0
+
+	$wget http://archive.apache.org/dist/oozie/4.1.0/oozie-4.1.0.tar.gz
+
+xtract-zipped-file oozie-4.1.0.tar.gz
+
+	$sudo tar xvzf oozie-4.1.0.tar.gz
+	$cd oozie-4.1.0
+	$sudo bin/mkdistro.sh -DskipTests -Dhadoopversion=2.6.0
+	$mkdir ~/oozie-4.1
+	$cp -R distro/target/oozie-4.1.0-distro/oozie-4.1.0/* ~/oozie-4.1
+
+# edit /etc/profile 
+
+	$sudo vim /etc/profile
+
+		i
+    			export OOZIE_VERSION=4.1.0
+    			export OOZIE_HOME=/home/ubuntu/oozie-4.1
+    			export PATH=$PATH:$OOZIE_HOME/bin
+		esc
+			:wq
+		enter
+
+	$source /etc/profile
+
+Enabling web console for Oozie
+
+We need ext-*.*.zip library and extjs
+
+	$cd $OOZIE_HOME
+
+	$mkdir libext
+
+	$cp ../oozie-4.1.0/hadooplibs/target/oozie-4.1.0-hadooplibs.tar.gz .
+
+	$tar -xzvf oozie-4.1.0-hadooplibs.tar.gz
+
+	$cp oozie-4.1.0/hadooplibs/hadooplib-2.3.0.oozie-4.1.0/* libext
+
+	$cd libext/
+
+	$wget http://archive.cloudera.com/gplextras/misc/ext-2.2.zip
+
+Configure the Hadoop cluster with proxyuser for the Oozie process.
+The following two properties are required in Hadoop core-site.xml:
+
+	$sudo vim $HADOOP_CONF_DIR/core-site.xml
+
+	i
+
+		  <!-- OOZIE -->
+  			<property>
+      				<name>hadoop.proxyuser.ubuntu.hosts</name>
+      				<value>*</value>
+  			</property>
+  			<property>
+      				<name>hadoop.proxyuser.ubuntu.groups</name>
+      				<value>*</value>
+  			</property>
+
+## RESTART HADOOP CLUSTER  !! ###
+
+	$sudo apt-get install unzip
+
+	$sudo apt-get intall zip
+
+	$oozie-setup.sh prepare-war
+
+# Create Sharelib Directory on HDFS
+
+# first get HDFS info
+	
+	$hdfs getconf -confKey fs.defaultFS
+
+-->hdfs://ec2-12-345-678-910.us-east-2.compute.amazonaws.com:9000 (This will be unique to you)
+
+# use the info obtained above
+	$oozie-setup.sh sharelib create -fs hdfs://ec2-52-91-50-127.compute-1.amazonaws.com:9000
+
+  setting CATALINA_OPTS="$CATALINA_OPTS -Xmx1024m"
+log4j:WARN No appenders could be found for logger (org.apache.hadoop.util.Shell).
+log4j:WARN Please initialize the log4j system properly.
+log4j:WARN See http://logging.apache.org/log4j/1.2/faq.html#noconfig for more info.
+SLF4J: Class path contains multiple SLF4J bindings.
+SLF4J: Found binding in [jar:file:/home/ubuntu/oozie-4.1/libtools/slf4j-simple-1.6.6.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: Found binding in [jar:file:/home/ubuntu/oozie-4.1/libtools/slf4j-log4j12-1.6.6.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: Found binding in [jar:file:/home/ubuntu/oozie-4.1/libext/slf4j-log4j12-1.6.6.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
+SLF4J: Actual binding is of type [org.slf4j.impl.SimpleLoggerFactory]
+the destination path for sharelib is: /user/ubuntu/share/lib/lib_20161209182912
+
+
+Update oozie-site.xml under OOZIE_CONF_DIR
+
+$sudo vim ~/oozie-4.1/conf/oozie-site.xml
+
+<property>
+        <name>oozie.service.HadoopAccessorService.hadoop.configurations</name>
+        <value>*=/usr/local/hadoop/etc/hadoop</value>
+        <description>
+            Comma separated AUTHORITY=HADOOP_CONF_DIR, where AUTHORITY is the HOST:PORT of
+            the Hadoop service (JobTracker, HDFS). The wildcard '*' configuration is
+            used when there is no exact match for an authority. The HADOOP_CONF_DIR contains
+            the relevant Hadoop *-site.xml files. If the path is relative is looked within
+            the Oozie configuration directory; though the path can be absolute (i.e. to point
+            to Hadoop client conf/ directories in the local filesystem.
+        </description>
+    </property>
+
+    <property>
+        <name>oozie.service.WorkflowAppService.system.libpath</name>
+        <value>/user/ubuntu/share/lib</value>
+        <description>
+            System library path to use for workflow applications.
+            This path is added to workflow application if their job properties sets
+            the property 'oozie.use.system.libpath' to true.
+        </description>
+    </property>
+
+
+Create oozie database 
+	
+	$ooziedb.sh create -sqlfile oozie.sql -run
+
+Start Oozie Service
+
+	$oozied.sh start
+
+Verify status of Oozie service
+
+	$oozie admin --oozie http://localhost:11000/oozie -status
+
+Compile map reduce java programs
+
+	$javac -classpath $HADOOP_HOME/share/hadoop/common/hadoop-common-2.6.0.jar:$HADOOP_HOME/share/hadoop/mapreduce/hadoop-mapreduce-client-core-2.6.0.jar:$HADOOP_HOME/share/hadoop/common/lib/commons-cli-1.2.jar -d ./ *.java
+
+Copy all *.class files into ~/classfiles
+
+Create the jar file 
+
+	$jar -cvf testoozie.jar -C classfiles/ .
+
+Create ~/map-reduce
+
+	$sudo mkdir ~/map-reduce
+
+Create ~/map-reduce/lib
+
+	$sudo mkdir ~/map-reduce/lib
+
+Create input directory /user/ubuntu/input on HDFS
+
+	$hdfs dfs -mkdir input
+
+Copy job.properties and workflow.xml into ~/map-reduce
+
+	>cd c:/users/castellano/documents/fall2019/big_data/aws
+	>scp -i Key1.pem C:\Users\Castellano\Documents\Fall2019\Big_Data\aws\job.properties ubuntu@ec2-18-191-216-127.us-east-2.compute.amazonaws.com:~
+	>scp -i Key1.pem C:\Users\Castellano\Documents\Fall2019\Big_Data\aws\workflow.xml ubuntu@ec2-18-191-216-127.us-east-2.compute.amazonaws.com:~
+	>ssh -i Key1.pem ubuntu@namenode_public_DNS
+	$sudo mv job.properties map-reduce
+	$sudo mv workflow.xml map-reduce
+
+Copy jar file into ~/map-reduce/lib
+
+	$exit
+	>scp -i Key1.pem C:\Users\Castellano\Documents\Fall2019\Big_Data\aws\FlightDataAnalysis.java ubuntu@ec2-18-191-216-127.us-east-2.compute.amazonaws.com:~
+	>ssh into NameNode
+	$sudo mkdir classfiles
+	$jar -cvf FlightDataAnalysis.jar -C classfiles/ .
+	$sudo mv FlightDataAnalysis.jar ~/map-reduce/lib
+
+Copy jar file to local computer
+
+	$exit
+	>scp -i Key1.pem ubuntu@ec2-3-134-94-174.us-east-2.compute.amazonaws.com:~/map-reduce/lib/FlightDataAnalysis.jar c:/users/castellano/documents/fall2019/big_data/Final_Project/
+
+Copy Flight data into HDFS (/user/ubuntu/input)
+
+Copy ~/map-reduce into HDFS 
+
+
+	$hdfs dfs -put ~/map-reduce map-reduce
+
+Run
+
+	$oozie job -oozie http://localhost:11000/oozie -config ~/map-reduce/job.properties -run
+
+
